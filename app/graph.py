@@ -21,11 +21,13 @@ def classify_intent(state: CaseState):
     out = classify(state["ticket"].text)
     return {"intents": out.intents, "severity": out.severity}
 
-_FAKE_CHUNKS = [{"text": "Refunds up to $50 within 30 days.", "meta": {"doc_id": "kb1", "url": "kb://refunds"}}]
+_FAKE_CHUNKS = [
+    {"text": "Refunds up to $50 within 30 days.", "meta": {"doc_id": "kb1", "url": "kb://refunds"}},
+    {"text": "Refunds typically settle within 3–5 business days.", "meta": {"doc_id": "kb2", "url": "kb://settlement"}}
+]
 _retriever = build_hybrid_retriever(_FAKE_CHUNKS)
 
 def retrieve_context(state: CaseState):
-    # Modern retrievers are runnables
     hits = _retriever.invoke(state["ticket"].text)
     chunks = [{
         "doc_id": h.metadata.get("doc_id", ""),
@@ -44,6 +46,9 @@ def verify_node(state: CaseState):
 def plan_node(state: CaseState):
     return {"actions": plan_actions(state)}
 
+def approval_node(state: CaseState):
+    return interrupt_approval(state)
+
 def execute_node(state: CaseState):
     if not state.get("approvals", {}).get("actions"):
         return {}
@@ -51,29 +56,32 @@ def execute_node(state: CaseState):
     return {"executed": results}
 
 def export_node(state: CaseState):
+    # export only if something executed
     if not state.get("executed"):
         return {}
     return {"artifacts": {"report_json": "file://tmp/report.json"}}
 
+# nodes
 workflow.add_node("ingest_ticket", ingest_ticket)
 workflow.add_node("classify_intent", classify_intent)
 workflow.add_node("retrieve_context", retrieve_context)
-workflow.add_node("draft", draft_node)
 workflow.add_node("verify", verify_node)
 workflow.add_node("plan", plan_node)
-workflow.add_node("approval", interrupt_approval)
+workflow.add_node("approval", approval_node)
+workflow.add_node("draft", draft_node)      # <-- draft AFTER approval
 workflow.add_node("execute", execute_node)
 workflow.add_node("export", export_node)
 workflow.add_node("close", lambda s: {})
 
+# edges
 workflow.add_edge(START, "ingest_ticket")
 workflow.add_edge("ingest_ticket", "classify_intent")
 workflow.add_edge("classify_intent", "retrieve_context")
-workflow.add_edge("retrieve_context", "draft")
-workflow.add_edge("draft", "verify")
+workflow.add_edge("retrieve_context", "verify")
 workflow.add_edge("verify", "plan")
 workflow.add_edge("plan", "approval")
-workflow.add_edge("approval", "execute")
+workflow.add_edge("approval", "draft")      # <-- draft after decision
+workflow.add_edge("draft", "execute")
 workflow.add_edge("execute", "export")
 workflow.add_edge("export", "close")
 workflow.add_edge("close", END)

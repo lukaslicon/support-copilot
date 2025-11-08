@@ -1,10 +1,7 @@
 # Copyright Lukas Licon 2025. All Rights Reserved.
 
-# run.py — interactive approval using LangGraph interrupt + Command
-
 from datetime import datetime
 from typing import Any, Dict
-
 from langgraph.types import Command
 from app.graph import graph
 from app.state import Ticket
@@ -29,7 +26,6 @@ def _print_outputs(state: Dict[str, Any]):
         print(artifacts)
 
 if __name__ == "__main__":
-    # Demo ticket
     ticket = Ticket(
         id="t_demo_1",
         channel="email",
@@ -43,31 +39,29 @@ if __name__ == "__main__":
     initial = {"ticket": ticket}
 
     print(">> Running until approval (will pause if a plan exists)...")
-
-    # 1) Invoke once. If the approval node calls interrupt(), result has "__interrupt__".
     result = graph.invoke(initial, cfg)
 
     interrupts = result.get("__interrupt__")
     if interrupts:
-        # Interrupt payload is a list; we put the plan in value["plan"]
         payload = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
-        plan = None
-        if isinstance(payload, dict):
-            plan = payload.get("plan") or payload
+        plan = payload.get("plan") if isinstance(payload, dict) else payload
         print("Approval requested. Proposed plan:\n")
-        print(plan or payload)
+        print(plan)
 
-        # Ask you for a decision
-        choice = input("\nApprove the plan? [y/N]: ").strip().lower()
-        approved = choice in ("y", "yes")
+        # 3-way decision
+        choice = input("\nApprove, Deny, or Defer? [a/d/Enter=defer]: ").strip().lower()
+        if choice.startswith("a"):
+            resume_value = "approve"
+        elif choice.startswith("d"):
+            resume_value = "deny"
+        else:
+            resume_value = "defer"
 
         print("\n>> Resuming with your decision...\n")
-        # 2) Resume: the resume value becomes the return of interrupt(...) inside hil.py
-        final_state = graph.invoke(Command(resume=approved), cfg)
+        final_state = graph.invoke(Command(resume=resume_value), cfg)
         _print_outputs(final_state)
         print("\n>> Done.")
     else:
-        # No interrupt -> either no plan or auto-approved path
         print("No approval needed. Running to completion...\n")
         _print_outputs(result)
         print("\n>> Done.")

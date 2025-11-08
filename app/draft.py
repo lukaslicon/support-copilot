@@ -3,14 +3,13 @@
 import os
 from typing import List
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage  # <-- needed
+from langchain_core.messages import SystemMessage, HumanMessage
 from .state import CaseState, DraftReply
 
 def get_llm():
     key = os.getenv("OPENAI_API_KEY")
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not set. Set it before running.")
-    # Low-latency model; set temperature=0 for consistent outputs
     return ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=key)
 
 def _format_snippets(retrieved: List[dict]) -> str:
@@ -30,20 +29,27 @@ def draft_reply(state: CaseState) -> DraftReply:
     llm = get_llm()
     snippets_md = _format_snippets(state.get("retrieved", []))
 
-    approved = bool(state.get("approvals", {}).get("actions"))
-    status_line = (
-        "Approval status: APPROVED. If actions were executed, reflect that in your wording."
-        if approved else
-        "Approval status: PENDING. DO NOT state that a refund was processed. Use conditional language like 'I can submit the refund as soon as I have your confirmation.'"
-    )
+    approvals = state.get("approvals", {})
+    actions_flag = approvals.get("actions", None)  # True | False | None (missing)
 
-    prompt = f"""You are a support copilot. {status_line}
+    if actions_flag is True:
+        disposition = "APPROVED"
+        guidance = "State clearly that the refund has been initiated and include the amount."
+    elif actions_flag is False:
+        disposition = "DENIED"
+        guidance = "Explain politely that the refund cannot be processed without approval and outline next steps or alternatives."
+    else:
+        disposition = "PENDING"
+        guidance = "Do NOT imply the refund has been processed. Offer to proceed as soon as approval is confirmed."
+
+    prompt = f"""You are a support copilot.
+
+Decision: {disposition}
+Guidance: {guidance}
 
 Rules:
-- Use ONLY the provided snippets; cite claims with [n].
-- If PENDING, avoid language implying the refund has already been processed.
-- If APPROVED, you may state that the refund has been initiated.
-- Be concise, empathetic, and action-oriented.
+- Ground policy statements in the snippets and cite with [n].
+- Keep it concise, empathetic, and action-oriented.
 - Output ONLY the final reply in Markdown.
 
 Customer message:
@@ -58,7 +64,6 @@ Snippets:
         HumanMessage(content=prompt),
     ])
 
-    # Build citations from retrieved items
     citations: List[str] = []
     for c in state.get("retrieved", []):
         src = c.get("source") or c.get("url") or c.get("doc_id")

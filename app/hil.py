@@ -5,23 +5,36 @@ from .state import CaseState
 
 def interrupt_approval(state: CaseState):
     """
-    Human-in-the-loop approval node using LangGraph interrupts.
+    Human-in-the-loop approval with tri-state:
+      approved=True  -> approved
+      approved=False -> denied
+      no 'approved'  -> pending/deferred
 
-    Flow:
-      - If there's no plan, nothing to approve -> continue.
-      - If we already have a decision in state["approved"], write it to approvals.
-      - Otherwise, pause here with `interrupt(...)`. The returned value on resume
-        becomes the approval decision (truthy -> approve).
+    Also auto-approve when the plan does not require approval.
     """
     plan = state.get("actions")
     if not plan:
         return {"approvals": {}}  # nothing to approve
 
-    # If runner provided a decision, commit it to state for execute_node
-    if "approved" in state:
-        return {"approvals": {"actions": bool(state["approved"])}}
+    # Auto-approve small refunds
+    if hasattr(plan, "requires_approval") and not plan.requires_approval:
+        return {"approved": True, "approvals": {"actions": True}}
 
-    # Pause graph execution and surface the plan to the runner
-    # This returns when graph.resume/graph.invoke(Command(resume=...)) is called
+    # Runner already decided (on resume)
+    if "approved" in state:  # True or False
+        return {
+            "approved": bool(state["approved"]),
+            "approvals": {"actions": bool(state["approved"])},
+        }
+
+    # Pause and ask the runner. Runner returns "approve" | "deny" | "defer".
     decision = interrupt({"plan": plan})
-    return {"approvals": {"actions": bool(decision)}}
+
+    if decision == "approve":
+        return {"approved": True, "approvals": {"actions": True}}
+    if decision == "deny":
+        return {"approved": False, "approvals": {"actions": False}}
+
+    # "defer" (or anything else) -> pending: leave 'approved' absent and don't set actions
+    return {"approvals": {}}
+
