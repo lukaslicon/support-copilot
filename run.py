@@ -1,8 +1,10 @@
 # Copyright Lukas Licon 2025. All Rights Reserved.
 
 from datetime import datetime
-from typing import Any, Dict
+import argparse
+from typing import Any, Dict, Optional
 from langgraph.types import Command
+
 from app.graph import graph
 from app.state import Ticket
 
@@ -25,20 +27,36 @@ def _print_outputs(state: Dict[str, Any]):
         print("\n=== Artifacts ===")
         print(artifacts)
 
+def parse_args():
+    p = argparse.ArgumentParser(description="Support Copilot runner")
+    p.add_argument("--amount-cents", type=int, default=2500, help="Refund amount in cents (e.g., 1000=$10)")
+    p.add_argument("--order-id", default="A100")
+    p.add_argument("--customer-id", default="cus_123")
+    p.add_argument("--text", default="I was double charged, please refund the extra amount.")
+    p.add_argument(
+        "--decision",
+        choices=["approve", "deny", "defer"],
+        help="Auto decision for HIL; if omitted, you'll be prompted when required.",
+    )
+    p.add_argument("--thread", default="demo-thread")
+    return p.parse_args()
+
 if __name__ == "__main__":
+    args = parse_args()
+
     ticket = Ticket(
-        id="t_demo_1",
+        id=f"t_{args.amount_cents}",
         channel="email",
         created_at=datetime.utcnow(),
-        customer_id="cus_123",
-        text="I was double charged for order #A100, please refund the extra $25.",
-        metadata={"order_id": "A100", "amount_cents": 2500},
+        customer_id=args.customer_id,
+        text=args.text,
+        metadata={"order_id": args.order_id, "amount_cents": args.amount_cents},
     )
 
-    cfg = {"configurable": {"thread_id": "demo-thread"}}
+    cfg = {"configurable": {"thread_id": args.thread}}
     initial = {"ticket": ticket}
 
-    print(">> Running until approval (will pause if a plan exists)...")
+    print(">> Running (will pause if a plan needs approval)...")
     result = graph.invoke(initial, cfg)
 
     interrupts = result.get("__interrupt__")
@@ -48,16 +66,18 @@ if __name__ == "__main__":
         print("Approval requested. Proposed plan:\n")
         print(plan)
 
-        # 3-way decision
-        choice = input("\nApprove, Deny, or Defer? [a/d/Enter=defer]: ").strip().lower()
-        if choice.startswith("a"):
-            resume_value = "approve"
-        elif choice.startswith("d"):
-            resume_value = "deny"
+        if args.decision:
+            resume_value = args.decision
+            print(f"\n>> Auto-deciding: {resume_value}\n")
         else:
-            resume_value = "defer"
+            choice = input("\nApprove, Deny, or Defer? [a/d/Enter=defer]: ").strip().lower()
+            if choice.startswith("a"):
+                resume_value = "approve"
+            elif choice.startswith("d"):
+                resume_value = "deny"
+            else:
+                resume_value = "defer"
 
-        print("\n>> Resuming with your decision...\n")
         final_state = graph.invoke(Command(resume=resume_value), cfg)
         _print_outputs(final_state)
         print("\n>> Done.")

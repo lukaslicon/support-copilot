@@ -44,15 +44,27 @@ def verify_node(state: CaseState):
     return verify_grounding(state)
 
 def plan_node(state: CaseState):
-    return {"actions": plan_actions(state)}
+    plan, missing = plan_actions(state)
+    out = {"actions": plan}
+    if missing:
+        out["missing_requirements"] = missing
+    return out
 
 def approval_node(state: CaseState):
     return interrupt_approval(state)
 
 def execute_node(state: CaseState):
-    if not state.get("approvals", {}).get("actions"):
+    plan = state.get("actions")
+    if not plan:
         return {}
-    results = execute_plan(state["actions"])
+
+    has_escalation = any(s.tool == "notify" for s in plan.steps)
+    approved = state.get("approvals", {}).get("actions") is True
+
+    if not approved and not has_escalation:
+        return {}  # needs approval for refund, and there is no escalation to run
+
+    results = execute_plan(plan)
     return {"executed": results}
 
 def export_node(state: CaseState):

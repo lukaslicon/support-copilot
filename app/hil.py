@@ -5,36 +5,33 @@ from .state import CaseState
 
 def interrupt_approval(state: CaseState):
     """
-    Human-in-the-loop approval with tri-state:
-      approved=True  -> approved
-      approved=False -> denied
-      no 'approved'  -> pending/deferred
-
-    Also auto-approve when the plan does not require approval.
+    HIL with tri-state. Auto-approve only when:
+      - plan.requires_approval is False AND plan contains a 'refund' step.
+    Escalation-only plans should NOT mark approvals true.
     """
     plan = state.get("actions")
     if not plan:
-        return {"approvals": {}}  # nothing to approve
+        return {"approvals": {}}
 
-    # Auto-approve small refunds
-    if hasattr(plan, "requires_approval") and not plan.requires_approval:
-        return {"approved": True, "approvals": {"actions": True}}
+    has_refund = any(s.tool == "refund" for s in plan.steps)
 
-    # Runner already decided (on resume)
-    if "approved" in state:  # True or False
-        return {
-            "approved": bool(state["approved"]),
-            "approvals": {"actions": bool(state["approved"])},
-        }
+    # Auto-approve low-tier refund plans
+    if (getattr(plan, "requires_approval", False) is False) and has_refund:
+        return {"approvals": {"actions": True}}
 
-    # Pause and ask the runner. Runner returns "approve" | "deny" | "defer".
-    decision = interrupt({"plan": plan})
+    # Escalation-only plan: no approval, just proceed to draft/execute path
+    if (getattr(plan, "requires_approval", False) is False) and not has_refund:
+        # leave approvals unset/False; execute_node will handle escalation
+        return {"approvals": {}}
 
+    # Await human for medium-tier refund plans
+    if "approved" in state:
+        return {"approvals": {"actions": bool(state["approved"])}}
+
+    decision = interrupt({"plan": plan})  # "approve" | "deny" | "defer"
     if decision == "approve":
-        return {"approved": True, "approvals": {"actions": True}}
+        return {"approvals": {"actions": True}}
     if decision == "deny":
-        return {"approved": False, "approvals": {"actions": False}}
-
-    # "defer" (or anything else) -> pending: leave 'approved' absent and don't set actions
+        return {"approvals": {"actions": False}}
+    # defer/pending
     return {"approvals": {}}
-

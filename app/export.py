@@ -1,18 +1,17 @@
 # Copyright Lukas Licon 2025. All Rights Reserved.
 
-from .state import ToolResult, ActionPlan
 from typing import List
-from .tools import refund_tool
+from .state import ActionPlan, ActionStep, ToolResult
+from .tools import TOOLS
 
 def execute_plan(plan: ActionPlan) -> List[ToolResult]:
-    results = []
+    results: List[ToolResult] = []
     for step in plan.steps:
+        schema, impl = TOOLS[step.tool]
+        args = schema(**step.args)
         try:
-            if step.tool == "refund":
-                res = refund_tool.invoke(step.args)  # call the LangChain tool
-                results.append(ToolResult(tool=step.tool, ok=True, result=res))
-            else:
-                results.append(ToolResult(tool=step.tool, ok=False, error="Tool not implemented"))
+            out = impl(args)
+            results.append(ToolResult(tool=step.tool, ok=True, result=out))
         except Exception as e:
-            results.append(ToolResult(tool=step.tool, ok=False, error=str(e)))
+            results.append(ToolResult(tool=step.tool, ok=False, error=str(e), result=None))
     return results
