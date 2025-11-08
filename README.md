@@ -1,4 +1,5 @@
 # support-copilot
+First test with the graph finishing without emitting an interrupt.
 
 (.venv) PS D:\Lang\LangRepo\support-copilot> python run.py
 >> Running until approval...
