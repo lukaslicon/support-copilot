@@ -1,3 +1,5 @@
+# Copyright Lukas Licon 2025. All Rights Reserved.
+
 from typing import Optional, Literal, List, Dict, Tuple, Annotated
 from typing_extensions import TypedDict
 from pydantic import BaseModel
@@ -50,7 +52,7 @@ class CaseState(TypedDict):
     retrieved: Annotated[List[RetrievalChunk], add]
     draft: Optional[DraftReply]
     actions: Optional[ActionPlan]
-    approvals: Dict[str, bool]
+    approvals: Dict[str, bool]           # {"actions": True/False}
     executed: Annotated[List[ToolResult], add]
     artifacts: Dict[str, str]
     policy_flags: Annotated[List[str], add]
