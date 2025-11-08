@@ -51,6 +51,8 @@ def execute_node(state: CaseState):
     return {"executed": results}
 
 def export_node(state: CaseState):
+    if not state.get("executed"):
+        return {}
     return {"artifacts": {"report_json": "file://tmp/report.json"}}
 
 workflow.add_node("ingest_ticket", ingest_ticket)
