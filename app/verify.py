@@ -1,4 +1,4 @@
-# app/verify.py
+# Copyright Lukas Licon 2025. All Rights Reserved.
 import re
 from .state import CaseState
 

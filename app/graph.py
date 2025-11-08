@@ -1,4 +1,5 @@
-# app/graph.py
+# Copyright Lukas Licon 2025. All Rights Reserved.
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -24,7 +25,7 @@ _FAKE_CHUNKS = [{"text": "Refunds up to $50 within 30 days.", "meta": {"doc_id":
 _retriever = build_hybrid_retriever(_FAKE_CHUNKS)
 
 def retrieve_context(state: CaseState):
-    # ❗️Modern retrievers are runnables
+    # Modern retrievers are runnables
     hits = _retriever.invoke(state["ticket"].text)
     chunks = [{
         "doc_id": h.metadata.get("doc_id", ""),

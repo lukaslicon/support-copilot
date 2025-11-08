@@ -1,4 +1,4 @@
-# app/tools.py
+# Copyright Lukas Licon 2025. All Rights Reserved.
 from langchain.tools import tool
 from pydantic import BaseModel, Field
 

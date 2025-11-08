@@ -1,4 +1,4 @@
-# app/classify.py
+# Copyright Lukas Licon 2025. All Rights Reserved.
 import os
 from pydantic import BaseModel, Field
 from typing import List, Literal

@@ -1,36 +1,13 @@
-# run.py — robust runner for Support Actions Copilot (with/without approval)
+# Copyright Lukas Licon 2025. All Rights Reserved.
+
+# run.py — interactive approval using LangGraph interrupt + Command
 
 from datetime import datetime
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
+from langgraph.types import Command
 from app.graph import graph
 from app.state import Ticket
-
-def _extract_plan_from_interrupt(event: Any):
-    """
-    Accepts common shapes from LangGraph stream:
-      tuple: ("approval", {"value": {"plan": ...}}) or ("approval", {"plan": ...})
-      dict : {"approval": {"value": {"plan": ...}}} or {"value": {"plan": ...}}
-    Returns (node_name, plan_obj) or (None, None).
-    """
-    # tuple case
-    if isinstance(event, tuple) and len(event) == 2:
-        node, payload = event
-        if isinstance(payload, dict):
-            plan = payload.get("value", {}).get("plan") or payload.get("plan") or payload.get("actions")
-            return node, plan
-
-    # dict with node key
-    if isinstance(event, dict):
-        if "approval" in event and isinstance(event["approval"], dict):
-            payload = event["approval"]
-            plan = payload.get("value", {}).get("plan") or payload.get("plan") or payload.get("actions")
-            return "approval", plan
-        if "value" in event and isinstance(event["value"], dict):
-            plan = event["value"].get("plan") or event["value"].get("actions")
-            return None, plan
-
-    return None, None
 
 def _print_outputs(state: Dict[str, Any]):
     draft = state.get("draft")
@@ -52,7 +29,7 @@ def _print_outputs(state: Dict[str, Any]):
         print(artifacts)
 
 if __name__ == "__main__":
-    # Seed ticket
+    # Demo ticket
     ticket = Ticket(
         id="t_demo_1",
         channel="email",
@@ -62,30 +39,35 @@ if __name__ == "__main__":
         metadata={"order_id": "A100", "amount_cents": 2500},
     )
 
-    initial = {"ticket": ticket}
     cfg = {"configurable": {"thread_id": "demo-thread"}}
+    initial = {"ticket": ticket}
 
-    print(">> Running until approval...")
+    print(">> Running until approval (will pause if a plan exists)...")
 
-    interrupt_event: Any = None
-    for event in graph.stream(initial, cfg):
-        node, plan = _extract_plan_from_interrupt(event)
-        if node == "approval" or plan is not None:
-            interrupt_event = event
-            break
+    # 1) Invoke once. If the approval node calls interrupt(), result has "__interrupt__".
+    result = graph.invoke(initial, cfg)
 
-    if interrupt_event:
-        # We hit approval
-        _, plan = _extract_plan_from_interrupt(interrupt_event)
-        print("Approval requested. Proposed plan:\n", plan)
+    interrupts = result.get("__interrupt__")
+    if interrupts:
+        # Interrupt payload is a list; we put the plan in value["plan"]
+        payload = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+        plan = None
+        if isinstance(payload, dict):
+            plan = payload.get("plan") or payload
+        print("Approval requested. Proposed plan:\n")
+        print(plan or payload)
 
-        print("\n>> Resuming with approval...\n")
-        final_state = graph.invoke({"approved": True}, cfg)
+        # Ask you for a decision
+        choice = input("\nApprove the plan? [y/N]: ").strip().lower()
+        approved = choice in ("y", "yes")
+
+        print("\n>> Resuming with your decision...\n")
+        # 2) Resume: the resume value becomes the return of interrupt(...) inside hil.py
+        final_state = graph.invoke(Command(resume=approved), cfg)
         _print_outputs(final_state)
         print("\n>> Done.")
     else:
-        # No approval needed this run — finish and print results
+        # No interrupt -> either no plan or auto-approved path
         print("No approval needed. Running to completion...\n")
-        final_state = graph.invoke(initial, cfg)
-        _print_outputs(final_state)
+        _print_outputs(result)
         print("\n>> Done.")

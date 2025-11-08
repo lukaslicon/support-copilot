@@ -1,4 +1,4 @@
-# app/draft.py
+# Copyright Lukas Licon 2025. All Rights Reserved.
 import os
 from typing import List
 from langchain_core.prompts import ChatPromptTemplate
