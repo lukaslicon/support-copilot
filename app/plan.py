@@ -6,7 +6,7 @@ from .config import (
     LOW_THRESHOLD_CENTS,
     MEDIUM_THRESHOLD_CENTS,
 )
-from .policy import required_evidence_for, which_missing
+from .policy import required_evidence_for, which_missing, policy_blocks_auto
 
 REFUND_KEYWORDS = [
     "refund", "refunded",
@@ -33,8 +33,26 @@ def plan_actions(state: CaseState):
     meta = state["ticket"].metadata if state.get("ticket") else {}
     if not (("billing" in intents) or _looks_like_billing(text)):
         return None, []
+    
+    cents = max(1, meta.get("amount_cents", 0)) 
+    # Global policy blocks (disqualify auto-refund regardless of amount)
+    blocked, reason = policy_blocks_auto(meta)
+    if blocked:
+        # deny & escalate via notify; no approval path for auto
+        esc = ActionStep(
+            tool="notify",
+            args={
+                "channel": "email",
+                "to": None,
+                "subject": f"Escalation (policy block: {reason}) for ticket {state['ticket'].id}",
+                "message": f"Refund request {cents}¢ for order {meta.get('order_id','')} blocked by policy: {reason}.",
+            },
+            guard=f"policy_block_{reason}",
+            rationale=f"Policy block: {reason}",
+        )
+        return ActionPlan(ticket_id=state["ticket"].id, steps=[esc], requires_approval=False), []
 
-    cents = max(1, meta.get("amount_cents", 0))
+    
 
     # Hard policy cap → auto deny & escalate via notify
     if cents > REFUND_CAP_CENTS:

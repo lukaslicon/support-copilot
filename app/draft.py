@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from .state import CaseState, DraftReply
 from .config import OPENAI_CHAT_MODEL
+from .policy import required_evidence_for, which_missing  # <-- fallback
 
 def get_llm():
     key = os.getenv("OPENAI_API_KEY")
@@ -44,26 +45,45 @@ def _humanize_requirements(reqs: List[str]) -> List[str]:
 def _format_amount(cents: int | None) -> str:
     if not cents or cents < 0:
         return ""
-    dollars = cents // 100
-    rem = cents % 100
-    return f"${dollars}.{rem:02d}"
+    return f"${cents//100}.{cents%100:02d}"
+
+def _strip_md_fence(text: str) -> str:
+    if not text:
+        return text
+    t = text.strip()
+    # remove a single leading ```... fence and matching trailing ```
+    if t.startswith("```"):
+        # drop first line
+        t = "\n".join(t.splitlines()[1:])
+        if t.endswith("```"):
+            t = "\n".join(t.splitlines()[:-1])
+    return t.strip()
 
 def draft_reply(state: CaseState) -> DraftReply:
     llm = get_llm()
     snippets_md = _format_snippets(state.get("retrieved", []))
 
-    meta = state["ticket"].metadata if state.get("ticket") else {}
+    ticket = state.get("ticket")
+    meta = ticket.metadata if ticket else {}
     amount_cents = meta.get("amount_cents")
     amount_str = _format_amount(amount_cents)
     order_id = meta.get("order_id", "")
+    text = ticket.text if ticket else ""
 
     approvals = state.get("approvals", {})
     actions_flag = approvals.get("actions", None)  # True | False | None
     plan = state.get("actions")
     escalated = _has_escalation(plan)
+
+    # 1) Prefer planner-provided missing list…
     missing = state.get("missing_requirements", [])
 
-    # If we’re missing required evidence, ask for it explicitly.
+    # …but if it isn't there (e.g., older plan_node), recompute as a fallback.
+    if not missing:
+        required = required_evidence_for(cents=amount_cents or 0, metadata=meta, text=text)
+        missing = which_missing(required=required, metadata=meta, text=text)
+
+    # Evidence-first: if missing items, ask for them explicitly.
     if missing:
         need_lines = "\n".join(f"- {x}" for x in _humanize_requirements(missing))
         prompt = f"""You are a support copilot.
@@ -84,16 +104,17 @@ Rules:
 - Output ONLY the final reply in Markdown.
 
 Customer message:
-\"\"\"{state["ticket"].text}\"\"\"
+\"\"\"{text}\"\"\"
 
 Snippets:
 {snippets_md}
 """
         msg = llm.invoke([SystemMessage(content="Follow the instructions precisely."),
                           HumanMessage(content=prompt)])
-        return DraftReply(ticket_id=state["ticket"].id, markdown=msg.content, citations=[])
+        clean = _strip_md_fence(msg.content)
+        return DraftReply(ticket_id=ticket.id, markdown=clean, citations=[])
 
-    # Otherwise decide tone based on approvals/escalation.
+    # Otherwise tri-state + escalation tone.
     if actions_flag is True:
         disposition = "APPROVED"
         guidance = "State clearly that the refund has been initiated using the exact requested amount shown below and include timeline."
@@ -117,22 +138,21 @@ Ticket context (must use exactly):
 - Requested refund amount: {amount_str or "(unspecified)"}
 
 Rules:
-- If you mention a dollar amount, it MUST be exactly the requested refund amount above (do NOT mention policy caps like $50 in the amount line).
+- If you mention a dollar amount, it MUST be exactly the requested refund amount above (do NOT use policy caps).
 - You may reference policy limits from snippets with [n], but never substitute them for the refund amount.
 - Keep it concise, empathetic, and action-oriented.
 - Cite policy statements with [n].
 - Output ONLY the final reply in Markdown.
 
 Customer message:
-\"\"\"{state["ticket"].text}\"\"\"
+\"\"\"{text}\"\"\"
 
 Snippets:
 {snippets_md}
 """
-    msg = llm.invoke([
-        SystemMessage(content="Follow the instructions precisely."),
-        HumanMessage(content=prompt),
-    ])
+    msg = llm.invoke([SystemMessage(content="Follow the instructions precisely."),
+                      HumanMessage(content=prompt)])
+    clean = _strip_md_fence(msg.content)
 
     citations: List[str] = []
     for c in state.get("retrieved", []):
@@ -140,4 +160,4 @@ Snippets:
         if src:
             citations.append(src)
 
-    return DraftReply(ticket_id=state["ticket"].id, markdown=msg.content, citations=citations)
+    return DraftReply(ticket_id=ticket.id, markdown=clean, citations=citations)
